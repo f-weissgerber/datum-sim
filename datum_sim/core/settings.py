@@ -29,6 +29,10 @@ class AppSettings(QObject):
     invert_rotate_y_changed = Signal(bool)
     invert_pan_x_changed    = Signal(bool)
     invert_pan_y_changed    = Signal(bool)
+    show_grid_changed = Signal(bool)
+
+    tool_mode_changed = Signal(str)
+    path_mode_changed = Signal(str)
 
     # Singleton ────────────────────────────────────────────────────────────────
     _instance: "AppSettings | None" = None
@@ -42,8 +46,6 @@ class AppSettings(QObject):
     def __init__(self):
         super().__init__()
         self._qs = QSettings("DatumSim", "DatumSim")
-
-    # ── Hintergrundfarbe ──────────────────────────────────────────────────────
 
     BG_COLORS = {
         "Dark (Standard)": "#1c1c1c",
@@ -61,8 +63,6 @@ class AppSettings(QObject):
     def bg_color(self, v: str):
         self._qs.setValue("camera/bg_color", v)
         self.bg_color_changed.emit(v)
-
-    # ── Geschwindigkeiten ─────────────────────────────────────────────────────
 
     @property
     def zoom_speed(self) -> float:
@@ -90,8 +90,6 @@ class AppSettings(QObject):
     def pan_speed(self, v: float):
         self._qs.setValue("camera/pan_speed", v)
         self.pan_speed_changed.emit(v)
-
-    # ── Invertierung ──────────────────────────────────────────────────────────
 
     @property
     def invert_zoom(self) -> bool:
@@ -138,67 +136,29 @@ class AppSettings(QObject):
         self._qs.setValue("camera/invert_pan_y", v)
         self.invert_pan_y_changed.emit(v)
 
-    # ── Simulation ────────────────────────────────────────────────────────────────
-
-    sim_mode_changed = Signal(str)
-    tool_display_changed = Signal(str)
-    show_rapid_changed = Signal(bool)
-    show_grid_changed = Signal(bool)
-
-    voxel_enabled_changed = Signal(bool)
-    voxel_keep_on_stop_changed = Signal(bool)
-
-    @property
-    def voxel_keep_on_stop(self) -> bool:
-        return self._qs.value("voxel_keep_on_stop", False, type=bool)
-
-    @voxel_keep_on_stop.setter
-    def voxel_keep_on_stop(self, v: bool):
-        self._qs.setValue("voxel_keep_on_stop", v)
-        self.voxel_keep_on_stop_changed.emit(v)
-
-    @property
-    def voxel_enabled(self) -> bool:
-        return self._qs.value("sim/voxel_enabled", False, type=bool)
-
-    @voxel_enabled.setter
-    def voxel_enabled(self, v: bool):
-        self._qs.setValue("sim/voxel_enabled", v)
-        self.voxel_enabled_changed.emit(v)
-
-    @property
-    def sim_mode(self) -> str:
-        return self._qs.value("sim/mode", "toolpath_full", type=str)
-
-    @sim_mode.setter
-    def sim_mode(self, v: str):
-        self._qs.setValue("sim/mode", v)
-        self.sim_mode_changed.emit(v)
-        print(v)
-
-    @property
-    def tool_display(self) -> str:
-        return self._qs.value("sim/tool_display", "point", type=str)
-
-    @tool_display.setter
-    def tool_display(self, v: str):
-        self._qs.setValue("sim/tool_display", v)
-        self.tool_display_changed.emit(v)
-
-    @property
-    def show_rapid(self) -> bool:
-        return self._qs.value("sim/show_rapid", True, type=bool)
-
-    @show_rapid.setter
-    def show_rapid(self, v: bool):
-        self._qs.setValue("sim/show_rapid", v)
-        self.show_rapid_changed.emit(v)
-
     @property
     def show_grid(self) -> bool:
-        return self._qs.value("sim/show_grid", True, type=bool)
+        return self._qs.value("camera/show_grid", True, type=bool)
 
     @show_grid.setter
     def show_grid(self, v: bool):
-        self._qs.setValue("sim/show_grid", v)
+        self._qs.setValue("camera/show_grid", v)
         self.show_grid_changed.emit(v)
+
+    @property
+    def tool_mode(self) -> str:
+        return self._qs.value("sim/tool_mode", "Point", type=str)
+
+    @tool_mode.setter
+    def tool_mode(self, v: str):
+        self._qs.setValue("sim/tool_mode", v)
+        self.tool_mode_changed.emit(v)
+
+    @property
+    def path_mode(self) -> str:
+        return self._qs.value("sim/path_mode", "Full", type=str)
+
+    @path_mode.setter
+    def path_mode(self, v: str):
+        self._qs.setValue("sim/path_mode", v)
+        self.path_mode_changed.emit(v)
