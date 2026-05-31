@@ -1,12 +1,3 @@
-"""
-SettingsPanel – Tab-Strip immer sichtbar, Panel fährt aus/ein.
-
-Aufbau:
-  SettingsPanel (QWidget)
-  ├── _strip  (QWidget)        ← Tab-Buttons, immer sichtbar, rechter Rand
-  └── _panel  (QFrame)         ← Inhalt, fährt links vom Strip aus/ein
-        └── QStackedWidget     ← ein Widget pro Tab
-"""
 from pathlib import Path
 from datum_sim.ui.overlay.panels.cam_panel import CamPanel
 from datum_sim.ui.overlay.panels.sim_panel import SimPanel
@@ -26,10 +17,6 @@ ICONS_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
 
 
 class SettingsPanel(QWidget):
-    """
-    Elternteil muss DatumSimWidget sein.
-    Positionierung übernimmt main_widget.py via resizeEvent.
-    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -66,16 +53,26 @@ class SettingsPanel(QWidget):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.addWidget(self._stack)
 
-        # ── Tabs registrieren ─────────────────────────────────────────────────
         self._tabs: list[QToolButton] = []
         self._add_tab(str(ICONS_DIR / "scan-cube.svg"), "Simulation")
         self._add_tab(str(ICONS_DIR / "view-360.svg"), "Viewport")
 
         self._strip_layout.addStretch()
 
-        # Panel-Inhalte setzen
-        self.set_tab_content(1, CamPanel())
-        self.set_tab_content(0, SimPanel())
+        self._sim_panel = SimPanel(self)
+        self._cam_panel = CamPanel(self)
+
+        self.set_tab_content(0, self._sim_panel)
+        self.set_tab_content(1, self._cam_panel)
+
+
+    @property
+    def sim_panel(self) -> SimPanel:
+        return self._sim_panel
+
+    @property
+    def cam_panel(self) -> CamPanel:
+        return self._cam_panel
 
     # ── Tab hinzufügen ────────────────────────────────────────────────────────
 
@@ -88,22 +85,11 @@ class SettingsPanel(QWidget):
         btn.setToolTip(tooltip)
         btn.setFixedSize(40, 40)
         btn.setCheckable(True)
-        btn.setStyleSheet("""
-            QToolButton {
-                color: white;
-                font-size: 18px;
-                border-radius: 6px;
-                background: transparent;
-            }
-            QToolButton:hover   { background: rgba(255,255,255,30); }
-            QToolButton:checked { background: rgba(255,255,255,60); }
-        """)
         btn.clicked.connect(lambda _=False, i=index: self._on_tab_clicked(i))
 
         self._strip_layout.insertWidget(index, btn)
         self._tabs.append(btn)
 
-        # Leerer Platzhalter – später durch echten Inhalt ersetzt
         self._stack.addWidget(QWidget())
 
     def set_tab_content(self, index: int, widget: QWidget):
@@ -112,8 +98,6 @@ class SettingsPanel(QWidget):
         self._stack.removeWidget(old)
         old.deleteLater()
         self._stack.insertWidget(index, widget)
-
-    # ── Toggle-Logik ──────────────────────────────────────────────────────────
 
     def _on_tab_clicked(self, index: int):
         if self._panel_open and self._active == index:
@@ -149,8 +133,6 @@ class SettingsPanel(QWidget):
         self._strip.setGeometry(0, 0, STRIP_W, h)
         if self._panel_open:
             self._panel.setGeometry(STRIP_W, 0, PANEL_W, h)
-
-    # ── Resize ────────────────────────────────────────────────────────────────
 
     def resizeEvent(self, e):
         super().resizeEvent(e)

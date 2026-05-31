@@ -29,31 +29,9 @@ def main():
     win.setWindowTitle("Datum Sim")
     win.resize(1280, 800)
 
-    # Optionales Argument: datum-sim mein_programm.ngc
-    if len(sys.argv) > 1:
-        win.load_file(sys.argv[1])
-    if len(sys.argv) > 1:
-        win.load_file(sys.argv[1])
-    else:
-        # Test-G-Code wenn keine Datei übergeben
-        win.load_gcode("""
-    G21 G90
-    G0 X0 Y0 Z5
-    G1 Z-1 F100
-    G1 X50 F300
-    G1 Y50
-    G1 X0
-    G1 Y0
-    G0 Z5
-    G1 X25 Y25
-    G1 Z-2 F100
-    G1 X35
-    G1 Y35
-    G1 X15
-    G1 Y15
-    G1 X25
-    G0 Z10
-    """)
+    # Loading the gcode file
+    print("Test",sys.argv[0])
+    win.set_file("./gcode.ngc")
 
     win.show()
     sys.exit(app.exec())

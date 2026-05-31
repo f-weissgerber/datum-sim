@@ -15,11 +15,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Später: pip install datum-renderer[linuxcnc]
+# Später: pip install datum-simulation[linuxcnc]
 linuxcnc = []
 
 [project.scripts]
-# Nach Installation: 'datum-renderer' als Kommandozeilenbefehl
+# Nach Installation: 'datum-simulation' als Kommandozeilenbefehl
 datum-sim = "datum_sim.__main__:main"
 
 [tool.setuptools.packages.find]

@@ -147,7 +147,7 @@ class AppSettings(QObject):
 
     @property
     def tool_mode(self) -> str:
-        return self._qs.value("sim/tool_mode", "Point", type=str)
+        return self._qs.value("sim/tool_mode", "ENDMILL", type=str)
 
     @tool_mode.setter
     def tool_mode(self, v: str):
