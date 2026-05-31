@@ -1,144 +1,181 @@
-import re
-
 from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Signal
 from PySide6.QtCore import QTimer
-
-from datum_sim.ui.viewport import Viewport
+from datum_sim.ui.viewport import Viewport, ToolMode, PathMode
 from datum_sim.ui.overlay.settings_panel import SettingsPanel
+from datum_sim.gcode.gcode_compiler import GCodeCompiler
+from datum_sim.simulation.simulation_player import SimulationPlayer
 from datum_sim.ui.overlay.control_hub import ControlHub
+from datum_sim.ui.overlay.panels.sim_panel import SimPanel
 
-from datum_sim.core.gcode_parser import GCodeParser
-from datum_sim.core.sim_engine import SimEngine
-
-
+from datum_sim.core.settings import AppSettings
 
 class DatumSimWidget(QWidget):
-
-    # ── Signals ───────────────────────────────────────────────────────────────
-    line_changed     = Signal(int)
-    position_changed = Signal(float, float, float)
-    simulation_ended = Signal()
-    error_occurred   = Signal(str)
+    _TOOL_MAP = {
+        "Endmill": ToolMode.CYLINDER,
+        "Point": ToolMode.POINT,
+        "None": ToolMode.NONE,
+    }
+    _PATH_MAP = {
+        "Complete": PathMode.FULL,
+        "Progressive": PathMode.PROGRESSIVE,
+        "None": PathMode.NONE,
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
-        # ── Subwidgets (Kinder von self, nicht von viewport!) ─────────────────
         self.viewport = Viewport(self)
         self.settings = SettingsPanel(self)
-
         self.control_hub = ControlHub(self)
-        self.control_hub.play_clicked.connect(self.play)
-        self.control_hub.pause_clicked.connect(self.pause)
-        self.control_hub.stop_clicked.connect(self.stop)
-        self.control_hub.speed_changed.connect(self.set_speed)
+        self.compiler = GCodeCompiler()
 
-        self._result = None
-        self._engine = SimEngine(self)
-        self._engine.progress.connect(self._on_progress)
-        self._engine.line_changed.connect(self._on_line_changed)
-        self._engine.finished.connect(self._on_finished)
+        self._player: SimulationPlayer | None = None
+        self._state = "IDLE"
+        self._mode  = "SIM"
+        self._clean_lines: list[str] = []
 
+        self.settings.sim_panel.tool_mode_changed.connect(self.set_tool_mode)
+        self.settings.sim_panel.path_mode_changed.connect(self.set_path_mode)
+
+        # Timer → _tick, nicht viewport.update direkt
         self._render_timer = QTimer(self)
-        self._render_timer.setInterval(16)  # ~60fps
-        self._render_timer.timeout.connect(self.viewport.update)
+        self._render_timer.setInterval(16)
+        self._render_timer.timeout.connect(self._tick)   # ← fix
         self._render_timer.start()
 
+        self._connect_control_hub()
         self._layout_overlays()
 
-    # ── Layout ────────────────────────────────────────────────────────────────
+    # ── Datei ─────────────────────────────────────────────────────────
 
-    def _layout_overlays(self):
-        """Viewport füllt alles, Overlays werden manuell positioniert."""
-        self.viewport.setGeometry(self.rect())
-        # Strip immer rechts bündig – Breite variiert je nach Panel-Zustand
-        w = self.settings.width()
-        self.settings.setGeometry(
-            self.width() - w,
-            0,
-            w,
-            self.height(),
+    def set_file(self, path: str):
+        self._load_file(path)
+
+    def _load_file(self, path: str):
+        programm      = self.compiler.load_file(path)
+        self._clean_lines = programm.clean_lines
+        print(self._clean_lines)
+        self._player  = SimulationPlayer(programm.path)
+        self.viewport.set_path(programm.path)
+
+        s = AppSettings.instance()
+        tool_mode = self._TOOL_MAP.get(s.tool_mode, ToolMode.POINT)
+        path_mode = self._PATH_MAP.get(s.path_mode, PathMode.PROGRESSIVE)
+
+        # Viewport aktualisieren
+        self.set_tool_mode(tool_mode)
+        self.set_path_mode(path_mode)
+
+    # ── Maschinen-API ─────────────────────────────────────────────────
+
+    def set_state(self, state: str):           # "IDLE" | "RUNNING" | "PAUSED"
+        self._state = state
+
+    def set_position(self, x: float, y: float, z: float):
+        if self._mode == "MACHINE":
+            self.viewport.set_tool_position(
+                __import__('numpy').array([x, y, z], dtype='f4')
+            )
+
+    def set_line(self, line: int):
+        self.viewport.set_active_line(line)
+
+    # ── Modus ─────────────────────────────────────────────────────────
+
+    def set_mode(self, mode: str):
+        assert mode in ("SIM", "MACHINE")
+        self._mode = mode
+        if mode == "SIM" and self._player:
+            self._player.reset()
+
+    def set_path_mode(self, mode: PathMode):
+        print("PathMode", mode)
+        self._path_mode = mode
+        self.viewport.set_path_mode(mode)      # einmalig setzen
+
+    def set_tool_mode(self, mode: ToolMode):
+        print("Tool mode:", mode)
+        self._tool_mode = mode
+        self.viewport.set_tool_mode(mode)      # einmalig setzen
+
+    def _connect_control_hub(self):
+        self.control_hub.play_clicked.connect(self.sim_play)
+        self.control_hub.pause_clicked.connect(self.sim_pause)
+        self.control_hub.stop_clicked.connect(self.sim_reset)
+        self.control_hub.speed_changed.connect(self.sim_set_speed)
+        self.control_hub.skip_forward_clicked.connect(
+            lambda: self.sim_seek(min(self._player.progress() + 0.05, 1.0))
+            if self._player else None
+        )
+        self.control_hub.skip_backward_clicked.connect(
+            lambda: self.sim_seek(max(self._player.progress() - 0.05, 0.0))
+            if self._player else None
         )
 
-        if hasattr(self, 'control_hub'):
-            margin = 20
-            hub_w = self.control_hub.width()
-            hub_h = self.control_hub.height()  # Holt sich die dynamische Höhe!
+    # ── Simulation ────────────────────────────────────────────────────
 
-            x = (self.width() - hub_w) // 2
-            y = self.height() - hub_h - margin
+    def sim_play(self):
+        if self._player: self._player.play()
 
-            self.control_hub.setGeometry(x, y, hub_w, hub_h)
+    def sim_pause(self):
+        if self._player: self._player.pause()
+
+    def sim_reset(self):
+        if self._player: self._player.reset()
+
+    def sim_seek(self, fraction: float):
+        if self._player: self._player.seek(fraction)
+
+    def sim_set_speed(self, speed: float):
+        if self._player: self._player.speed_scale = speed
+
+    def push_machine_position(self, x: float, y: float, z: float):
+        pass   # MachineAdapter folgt später
+
+    # ── Tick – jeden Frame ────────────────────────────────────────────
+
+    def _tick(self):
+        if self._mode == "SIM":
+            if self._player is None:
+                self.viewport.update()
+                return
+            pos = self._player.tick()
+            line = self._player.current_line()
+            prog = self._player.progress()
+            s = self._player.current_s()  # ← mm-Bogenlänge
+
+            self.viewport.set_tool_position(pos)
+            self.viewport.set_active_line(line)
+            self.viewport.set_progress(s)  # ← s statt prog
+
+            self.control_hub.set_gcode("("+str(line)+") "+self._clean_lines[line])
+
+        self.viewport.update()
+
+    # ── Layout ────────────────────────────────────────────────────────
+
+    def _layout_overlays(self):
+        W = self.width()
+        H = self.height()
+
+        # Viewport füllt alles
+        self.viewport.setGeometry(0, 0, W, H)
+
+        # Settings rechts oben
+        sw = self.settings.width()
+        self.settings.setGeometry(W - sw, 0, sw, H)
+
+        # ControlHub unten mittig
+        cw = self.control_hub.width()    # 450 (fixedSize)
+        ch = self.control_hub.height()   # 100 (fixedSize)
+        margin_bottom = 16
+        self.control_hub.setGeometry(
+            (W - cw) // 2,              # horizontal zentriert
+            H - ch - margin_bottom,     # unten mit Abstand
+            cw,
+            ch,
+        )
+
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._layout_overlays()
-
-    def _on_progress(self, vertex_index: int):
-        self.viewport.toolpath_renderer.set_progress(vertex_index)
-
-    def _on_line_changed(self, line: int):
-        self.line_changed.emit(line)
-
-    def _on_finished(self):
-        self.simulation_ended.emit()
-        self.viewport.toolpath_renderer.show_all()
-        self.viewport.update()
-
-    # Öffentliche API:
-    def load_file(self, path: str):
-        self._engine.stop()
-        self._engine.wait()
-        result = GCodeParser().parse_file(path)
-        self._result = result
-        self.viewport.load_result(result)
-
-    def load_gcode(self, gcode: str):
-        self._engine.stop()
-        self._engine.wait()
-        result = GCodeParser().parse_string(gcode)
-        self._result = result
-        self.viewport.load_result(result)
-
-    def play(self):
-        print(f"play() aufgerufen")
-        print(f"  result: {self._result}")
-        print(f"  engine läuft: {self._engine.isRunning()}")
-        if self._result is None:
-            print("  ABBRUCH: kein result")
-            return
-        if self._engine.isRunning():
-            print("  resume")
-            self._engine.resume()
-        else:
-            print("  starte engine")
-            self._engine.load(self._result,
-                              self.viewport.toolpath_renderer)
-            print(f"  renderer: {self.viewport.toolpath_renderer}")
-            print(f"  renderer moves: {len(self._result.moves)}")
-            self._engine.start()
-            print(f"  engine gestartet: {self._engine.isRunning()}")
-
-    def stop(self):
-        self._engine.stop()
-        self._engine.wait()
-        # Jetzt erst zurücksetzen – Engine ist sicher gestoppt
-        self.viewport.toolpath_renderer.reset()
-        self.viewport.update()
-
-    def pause(self):
-        self._engine.pause()
-
-
-    def set_speed(self, factor: float):
-        self._engine.set_speed(factor)
-
-    def jump_to_line(self, line: int):
-        """Simulation zu einer bestimmten G-Code-Zeile vorspulen."""
-        print("jump_to_line")
-
-    def set_current_line(self, line: int):
-        """Aktuelle Zeile von außen setzen (LinuxCNC-Kopplung)."""
-        self.control_hub.set_gcode(f"N{line} ...")
-        print("set_current_line")
