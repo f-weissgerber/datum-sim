@@ -6,6 +6,7 @@ from PySide6.QtGui import QFont, QIcon
 from PySide6.QtCore import Signal
 
 ICONS_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
+
 class GCodeLine(QLabel):
     def __init__(self, parent=None, realtime: bool = False):
         super().__init__(parent)
@@ -67,10 +68,14 @@ class ControlHub(QWidget):
         self.main_layout.setSpacing(8)
 
         self.btn_layout = QHBoxLayout()
-        self.btn_play = QPushButton(self)
-        self.btn_play.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
-        self.btn_pause = QPushButton(self)
-        self.btn_pause.setIcon(QIcon(str(ICONS_DIR / "player-pause.svg")))
+        self.btn_play_pause= QPushButton(self)
+        self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
+
+        self._state = 0
+
+        #self.btn_pause = QPushButton(self)
+        #self.btn_pause.setIcon(QIcon(str(ICONS_DIR / "player-pause.svg")))
+
         self.btn_stop = QPushButton(self)
         self.btn_stop.setIcon(QIcon(str(ICONS_DIR / "player-stop.svg")))
         self.btn_skip_backward = QPushButton(self)
@@ -78,7 +83,7 @@ class ControlHub(QWidget):
         self.btn_skip_forward = QPushButton(self)
         self.btn_skip_forward.setIcon(QIcon(str(ICONS_DIR / "player-skip-forward.svg")))
 
-        for btn in [self.btn_skip_backward, self.btn_pause, self.btn_play, self.btn_stop, self.btn_skip_forward]:
+        for btn in [self.btn_skip_backward, self.btn_play_pause, self.btn_skip_forward, self.btn_stop]:
             btn.setFixedSize(40, 40)
             btn.setIconSize(QSize(24, 24))
             btn.setStyleSheet("""
@@ -101,8 +106,9 @@ class ControlHub(QWidget):
         self.btn_layout.addStretch()
 
         self.slider_speed = QSlider(Qt.Horizontal, self)
-        self.slider_speed.setRange(0, 200)
+        self.slider_speed.setRange(0, 2000)
         self.slider_speed.setValue(100)
+
         self.slider_speed.setFixedWidth(150)
         self.slider_speed.setStyleSheet("""
                     QSlider {
@@ -141,9 +147,8 @@ class ControlHub(QWidget):
         self.main_layout.addWidget(self.gcode_line)
 
         # Connect signals
-        self.btn_play.clicked.connect(self.play_clicked)
-        self.btn_pause.clicked.connect(self.pause_clicked)
-        self.btn_stop.clicked.connect(self.stop_clicked)
+        self.btn_play_pause.clicked.connect(self._play_pause_clicked)
+        self.btn_stop.clicked.connect(self._stop_clicked)
         self.btn_skip_forward.clicked.connect(self.skip_forward_clicked)
         self.btn_skip_backward.clicked.connect(self.skip_backward_clicked)
         self.slider_speed.valueChanged.connect(
@@ -152,3 +157,22 @@ class ControlHub(QWidget):
 
     def set_gcode(self, raw_text: str):
         self.gcode_line.set_gcode(raw_text)
+
+    def _play_pause_clicked(self):
+        if self._state == 0:
+            self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-pause.svg")))
+            self._state = 1
+            self.play_clicked.emit()
+        elif self._state == 1:
+            self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
+            self._state = 0
+            self.pause_clicked.emit()
+
+    def _stop_clicked(self):
+        self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
+        self.stop_clicked.emit()
+        self._state = 0
+
+    def _on_speed_changed(self, value: int):
+        speed = value / 100.0  # 1→0.01×, 100→1.0×, 1000→10.0×
+        self.speed_changed.emit(speed)
