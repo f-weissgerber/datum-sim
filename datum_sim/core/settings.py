@@ -31,6 +31,11 @@ class AppSettings(QObject):
     invert_pan_y_changed    = Signal(bool)
     show_grid_changed = Signal(bool)
 
+    show_gcode_line_changed = Signal(bool)
+    show_datum_changed = Signal(bool)
+    show_tool_changed = Signal(bool)
+    show_feedrate_changed = Signal(bool)
+
     tool_mode_changed = Signal(str)
     path_mode_changed = Signal(str)
 
@@ -162,3 +167,39 @@ class AppSettings(QObject):
     def path_mode(self, v: str):
         self._qs.setValue("sim/path_mode", v)
         self.path_mode_changed.emit(v)
+
+    @property
+    def show_gcode_line(self) -> bool:
+        return self._qs.value("controlhub/show_gcode_line", True, type=bool)
+
+    @show_gcode_line.setter
+    def show_gcode_line(self, v: bool):
+        self._qs.setValue("controlhub/show_gcode_line", v)
+        self.show_gcode_line_changed.emit(v)
+
+    @property
+    def show_datum(self) -> bool:
+        return self._qs.value("controlhub/show_datum", True, type=bool)
+
+    @show_datum.setter
+    def show_datum(self, v: bool):
+        self._qs.setValue("controlhub/show_datum", v)
+        self.show_datum_changed.emit(v)
+
+    @property
+    def show_tool(self) -> bool:
+        return self._qs.value("controlhub/show_tool", True, type=bool)
+
+    @show_tool.setter
+    def show_tool(self, v: bool):
+        self._qs.setValue("controlhub/show_tool", v)
+        self.show_tool_changed.emit(v)
+
+    @property
+    def show_feedrate(self) -> bool:
+        return self._qs.value("controlhub/show_feedrate", True, type=bool)
+
+    @show_feedrate.setter
+    def show_feedrate(self, v: bool):
+        self._qs.setValue("controlhub/show_feedrate", v)
+        self.show_feedrate_changed.emit(v)
