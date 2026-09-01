@@ -11,6 +11,8 @@ from datum_sim.simulation.tool_mesh import build_tool_mesh
 from datum_sim.simulation.tool_definition import ToolDefinition
 from datum_sim.simulation.tool_database import get_tool
 
+from datum_sim.core.perf_monitor import PerfMonitor
+
 
 class PathMode(Enum):
     NONE        = auto()
@@ -64,8 +66,59 @@ out vec4 f_col;
 void main() { f_col = vec4(v_color, 1.0); }
 """
 
+_VERT_GRADIENT = """
+#version 330 core
+out vec2 v_uv;
+void main() {
+    vec2 pos = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+    v_uv = pos;
+    gl_Position = vec4(pos * 2.0 - 1.0, 0.0, 1.0);
+}
+"""
+_FRAG_GRADIENT = """
+#version 330 core
+in vec2 v_uv;
+out vec4 f_col;
+uniform vec3 u_color_inner;
+uniform vec3 u_color_outer;
+uniform vec2 u_center;
+uniform float u_radius;
+uniform float u_aspect;
+void main() {
+    vec2 d = v_uv - u_center;
+    d.x *= u_aspect;
+    float t = clamp(length(d) / u_radius, 0.0, 1.0);
+    f_col = vec4(mix(u_color_inner, u_color_outer, t), 1.0);
+}
+"""
 
-def _build_axes_grid(axis_len=40.0, grid_range=1000, grid_step=10):
+_FRAG_CORNER_FILL = """
+#version 330 core
+out vec4 f_col;
+uniform vec2 u_resolution_px;
+uniform float u_radius_px;
+uniform vec3 u_grad_top;
+uniform vec3 u_grad_bottom;
+uniform float u_window_y_offset_px;
+uniform float u_window_height_px;
+void main() {
+    vec2 p      = gl_FragCoord.xy;
+    vec2 half_r = u_resolution_px * 0.5;
+    vec2 pos    = p - half_r;
+    vec2 q      = abs(pos) - (half_r - u_radius_px);
+    float dist  = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - u_radius_px;
+    float corner_alpha = smoothstep(-1.0, 1.0, dist);  // 1 = Eckbereich, 0 = innerhalb der Rundung
+
+    float local_y_top_down = u_resolution_px.y - p.y;
+    float win_y = u_window_y_offset_px + local_y_top_down;
+    float t     = clamp(win_y / u_window_height_px, 0.0, 1.0);
+    vec3 grad_color = mix(u_grad_top, u_grad_bottom, t);
+
+    f_col = vec4(grad_color, corner_alpha);
+}
+"""
+
+def _build_axes_grid(axis_len=40.0, grid_range=200, grid_step=10):
     verts, cols = [], []
     for end, color in [
         ([axis_len, 0, 0], [1.0, 0.2, 0.2]),
@@ -154,7 +207,8 @@ class Viewport(QOpenGLWidget):
         self._rotate_accumulated = QPointF(0, 0)
         self._multi_touch_active = False
         self.ROTATE_THRESHOLD    = 16
-        self._bg                 = _hex_to_rgb(AppSettings.instance().bg_color)
+        self._bg = _hex_to_rgb(AppSettings.instance().bg_color)
+        self._bg2 = _hex_to_rgb(AppSettings.instance().bg_color_2)
 
         self._path_mode          = PathMode.FULL
         self._tool_mode          = ToolMode.CYLINDER
@@ -171,6 +225,7 @@ class Viewport(QOpenGLWidget):
         self.setAttribute(Qt.WA_AcceptTouchEvents, True)
         self.setMinimumSize(400, 300)
         AppSettings.instance().bg_color_changed.connect(self._on_bg_changed)
+        AppSettings.instance().bg_color_2_changed.connect(self._on_bg2_changed)
 
     # ── Öffentliche API ───────────────────────────────────────────────
 
@@ -243,8 +298,6 @@ class Viewport(QOpenGLWidget):
 
     # ── OpenGL ────────────────────────────────────────────────────────
 
-
-
     def initializeGL(self):
         self.ctx = moderngl.create_context()
         self.ctx.enable(moderngl.DEPTH_TEST)
@@ -253,6 +306,22 @@ class Viewport(QOpenGLWidget):
         self._tool_prog = self.ctx.program(
             vertex_shader=_VERT_TOOL, fragment_shader=_FRAG_TOOL
         )
+
+        self._gradient_prog = self.ctx.program(
+            vertex_shader=_VERT_GRADIENT, fragment_shader=_FRAG_GRADIENT
+        )
+        self._gradient_vao = self.ctx.vertex_array(self._gradient_prog, [])
+
+        self._corner_fill_prog = self.ctx.program(
+            vertex_shader=_VERT_GRADIENT, fragment_shader=_FRAG_CORNER_FILL
+        )
+        self._corner_fill_vao = self.ctx.vertex_array(self._corner_fill_prog, [])
+        self._corner_radius_px = 12.0
+
+        # Muss exakt mit der QMainWindow-QSS übereinstimmen — bewusste Duplikation,
+        # da es aktuell keine gemeinsame Quelle für Fenster- vs. Viewport-Farben gibt.
+        self._win_grad_top = _hex_to_rgb("#141b26")
+        self._win_grad_bottom = _hex_to_rgb("#0b0f16")
 
         # Grid + Achsen
         verts, colors = _build_axes_grid()
@@ -292,7 +361,7 @@ class Viewport(QOpenGLWidget):
             [
                 (self._cursor_vbo, '3f', 'in_pos'),
                 (self.ctx.buffer(
-                    np.array([1.0, 0.2, 0.2], dtype='f4').tobytes()
+                    np.array([1.0, 0.84, 0.0], dtype='f4').tobytes()
                 ), '3f', 'in_col'),
             ],
         )
@@ -325,7 +394,16 @@ class Viewport(QOpenGLWidget):
     def paintGL(self):
         fbo = self.ctx.detect_framebuffer(self.defaultFramebufferObject())
         fbo.use()
-        fbo.clear(*self._bg, 1.0)
+        fbo.clear(0.0, 0.0, 0.0, 1.0)
+
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self._gradient_prog['u_color_inner'].value = self._bg
+        self._gradient_prog['u_color_outer'].value = self._bg2
+        self._gradient_prog['u_center'].value = (0.15, 0.9)     # cy gespiegelt: Qt-oben = GL-y=1
+        self._gradient_prog['u_radius'].value = 1.1
+        self._gradient_prog['u_aspect'].value = self.width() / max(self.height(), 1)
+        self._gradient_vao.render(moderngl.TRIANGLES, vertices=3)
+        self.ctx.enable(moderngl.DEPTH_TEST)
 
         aspect = self.width() / max(self.height(), 1)
         mvp = self.camera.mvp(aspect)
@@ -356,6 +434,33 @@ class Viewport(QOpenGLWidget):
             self._cursor_vao.render(moderngl.POINTS, vertices=1)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
+        if self._perf:
+            self._perf.tick()
+
+        # ── Ecken: Fenster-Gradient pixelgenau einblenden ────────────
+        win = self.window()
+        dpr = self.devicePixelRatioF()
+        if win is not None:
+            top_left = self.mapTo(win, self.rect().topLeft())
+            window_y_offset_px = top_left.y() * dpr
+            window_height_px   = win.height() * dpr
+        else:
+            window_y_offset_px = 0.0
+            window_height_px   = max(self.height() * dpr, 1.0)
+
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        self._corner_fill_prog['u_resolution_px'].value = (self.width() * dpr, self.height() * dpr)
+        self._corner_fill_prog['u_radius_px'].value = self._corner_radius_px * dpr
+        self._corner_fill_prog['u_grad_top'].value = self._win_grad_top
+        self._corner_fill_prog['u_grad_bottom'].value = self._win_grad_bottom
+        self._corner_fill_prog['u_window_y_offset_px'].value = window_y_offset_px
+        self._corner_fill_prog['u_window_height_px'].value = window_height_px
+        self._corner_fill_vao.render(moderngl.TRIANGLES, vertices=3)
+        self.ctx.disable(moderngl.BLEND)
+        self.ctx.enable(moderngl.DEPTH_TEST)
+
     # ── Intern ────────────────────────────────────────────────────────
 
     def _upload_path(self, path: PathBuffer):
@@ -364,7 +469,7 @@ class Viewport(QOpenGLWidget):
         colors   = np.where(
             is_rapid[:, None],
             [[1.0, 0.8, 0.0]],
-            [[0.0, 0.8, 1.0]],
+            [[0.0, 0.9, 1.0]],
         ).astype('f4')
 
         if self._path_vao is not None:
@@ -384,6 +489,10 @@ class Viewport(QOpenGLWidget):
 
     def _on_bg_changed(self, hex_color: str):
         self._bg = _hex_to_rgb(hex_color)
+        self.update()
+
+    def _on_bg2_changed(self, hex_color: str):
+        self._bg2 = _hex_to_rgb(hex_color)
         self.update()
 
     # ── Maus + Touch ──────────────────────────────────────────────────

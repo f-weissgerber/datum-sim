@@ -1,0 +1,2 @@
+[console_scripts]
+datum-sim = datum_sim.__main__:main

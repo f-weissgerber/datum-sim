@@ -83,6 +83,27 @@ class CamPanel(QWidget):
 
         main_layout.addLayout(invert_layout)
 
+        main_layout.addWidget(QLabel("Info Display"))
+        info_layout = QFormLayout()
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(8)
+
+        self._cb_gcode = QCheckBox()
+        self._cb_datum = QCheckBox()
+        self._cb_tool = QCheckBox()
+        self._cb_feedrate = QCheckBox()
+
+        self._cb_gcode.setChecked(self._s.show_gcode_line)
+        self._cb_datum.setChecked(self._s.show_datum)
+        self._cb_tool.setChecked(self._s.show_tool)
+        self._cb_feedrate.setChecked(self._s.show_feedrate)
+
+        info_layout.addRow("GCode Line", self._cb_gcode)
+        info_layout.addRow("Datum", self._cb_datum)
+        info_layout.addRow("Tool", self._cb_tool)
+        info_layout.addRow("Feed Rate", self._cb_feedrate)
+        main_layout.addLayout(info_layout)
+
         main_layout.addStretch()
         self.setLayout(main_layout)
 
@@ -115,6 +136,10 @@ class CamPanel(QWidget):
         self._show_grid.toggled.connect(
             lambda v: setattr(self._s, "show_grid", v)
         )
+        self._cb_gcode.toggled.connect(lambda v: setattr(self._s, "show_gcode_line", v))
+        self._cb_datum.toggled.connect(lambda v: setattr(self._s, "show_datum", v))
+        self._cb_tool.toggled.connect(lambda v: setattr(self._s, "show_tool", v))
+        self._cb_feedrate.toggled.connect(lambda v: setattr(self._s, "show_feedrate", v))
 
     # ── Hilfsmethoden ─────────────────────────────────────────────────
 

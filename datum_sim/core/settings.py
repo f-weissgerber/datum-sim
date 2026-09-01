@@ -19,6 +19,7 @@ class AppSettings(QObject):
 
     # Signals ──────────────────────────────────────────────────────────────────
     bg_color_changed        = Signal(str)
+    bg_color_2_changed = Signal(str)
 
     zoom_speed_changed      = Signal(float)
     rotate_speed_changed    = Signal(float)
@@ -58,6 +59,7 @@ class AppSettings(QObject):
         "Dark Grey":        "#2d2d2d",
         "Grey":        "#4a4a4a",
         "Dark Blue":        "#0d1b2a",
+        "DATUM": "#232a35" ,
     }
 
     @property
@@ -68,6 +70,15 @@ class AppSettings(QObject):
     def bg_color(self, v: str):
         self._qs.setValue("camera/bg_color", v)
         self.bg_color_changed.emit(v)
+
+    @property
+    def bg_color_2(self) -> str:
+        return self._qs.value("camera/bg_color_2", "#161b22", type=str)
+
+    @bg_color_2.setter
+    def bg_color_2(self, v: str):
+        self._qs.setValue("camera/bg_color_2", v)
+        self.bg_color_2_changed.emit(v)
 
     @property
     def zoom_speed(self) -> float:

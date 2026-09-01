@@ -28,8 +28,8 @@ def build_tool_mesh(
     colors: list = []
 
     # Farbdefinitionen
-    COLOR_CUTTING = [0.9, 0.2, 0.2]  # Aggressives Schneiden-Rot
-    COLOR_SHANK = [0.6, 0.6, 0.6]  # Neutrales Schaft-Grau
+    COLOR_CUTTING = [1.0, 0.84, 0.0]  # Aggressives Schneiden-Rot
+    COLOR_SHANK = [0.5, 0.5, 0.5]  # Neutrales Schaft-Grau
 
     # ── Mantel ───────────────────────────────────────────────────────
     for k in range(len(z_vals) - 1):

@@ -2,10 +2,10 @@ import re
 from pathlib import Path
 from PySide6.QtWidgets import (
     QLabel, QWidget, QHBoxLayout, QVBoxLayout,
-    QPushButton, QSlider, QSizePolicy
+    QPushButton, QSlider, QSizePolicy, QStackedWidget
 )
-from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui  import QFont, QIcon
+from PySide6.QtCore import Qt, QSize, QPoint, Signal
+from PySide6.QtGui import QFont, QIcon
 from datum_sim.core.settings import AppSettings
 
 ICONS_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
@@ -45,6 +45,8 @@ _BTN_STYLE = """
 """
 
 
+# ── GCode Label ───────────────────────────────────────────────────────────────
+
 class GCodeLine(QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,27 +63,105 @@ class GCodeLine(QLabel):
     def set_gcode(self, raw_text: str):
         def color_replacer(match):
             letter = match.group(1).upper()
-            color  = self._colors.get(letter, "#E0E0E0")
+            color = self._colors.get(letter, "#E0E0E0")
             return f'<span style="color:{color};">{letter}{match.group(2)}</span>'
+
         text = re.sub(r'([A-Za-z])([-+]?\d*\.?\d+)', color_replacer, raw_text)
         text = re.sub(r'(\(.*?\))', r'<span style="color:#7F848E;">\1</span>', text)
         self.setText(text)
 
 
-class ControlHub(QWidget):
+# ── Speed Slider mit Popup ────────────────────────────────────────────────────
 
-    play_clicked          = Signal()
-    pause_clicked         = Signal()
-    stop_clicked          = Signal()
-    skip_forward_clicked  = Signal()
+class SpeedSlider(QSlider):
+    """
+    Horizontaler Slider der beim Ziehen ein schwebendes Label
+    direkt über dem Handle anzeigt.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Horizontal, parent)
+
+        # Qt.ToolTip verhindert, dass das Label vom Slider-Rand abgeschnitten wird
+        self._popup = QLabel(self, Qt.ToolTip)
+        self._popup.setAlignment(Qt.AlignCenter)
+        self._popup.setStyleSheet("""
+            QLabel {
+                background: rgba(30, 30, 30, 230);
+                color: #E2E8F0;
+                border: 1px solid rgba(255,255,255,20%);
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-family: Consolas;
+                font-size: 12px;
+            }
+        """)
+        self._popup.hide()
+
+        self.sliderPressed.connect(self._on_pressed)
+        self.sliderReleased.connect(self._popup.hide)
+        self.valueChanged.connect(self._on_value_changed)
+
+        self._snap_target = 100
+        self._snap_threshold_pos = 50
+        self._snap_threshold_neg = 10
+
+    def _on_pressed(self):
+        self._update_popup()
+        self._popup.show()
+
+    def _on_value_changed(self, val):
+        lower_bound = self._snap_target - self._snap_threshold_neg
+        upper_bound = self._snap_target + self._snap_threshold_pos
+
+        if lower_bound <= val <= upper_bound and val != self._snap_target:
+            self.setValue(self._snap_target)
+            return
+
+        if self._popup.isVisible():
+            self._update_popup()
+
+    def _update_popup(self):
+        speed = self.value() / 100.0
+        self._popup.setText(f"{speed:.2f}×")
+        self._popup.adjustSize()
+
+        opt_min = self.minimum()
+        opt_max = self.maximum()
+        span = opt_max - opt_min
+
+        if span == 0:
+            hx = self.width() // 2
+        else:
+            ratio = (self.value() - opt_min) / span
+            usable = self.width() - 12  # Korrektur für Handle-Breite (12px aus CSS)
+            hx = 6 + int(ratio * usable)
+
+        # Lokale Slider-Koordinaten in globale Bildschirmkoordinaten umwandeln
+        global_pos = self.mapToGlobal(QPoint(hx, 0))
+
+        # Zentriert über dem Handle, 6px Abstand nach unten
+        x = global_pos.x() - self._popup.width() // 2
+        y = global_pos.y() - self._popup.height() - 6
+
+        self._popup.move(x, y)
+
+
+# ── ControlHub ────────────────────────────────────────────────────────────────
+
+class ControlHub(QWidget):
+    play_clicked = Signal()
+    pause_clicked = Signal()
+    stop_clicked = Signal()
+    skip_forward_clicked = Signal()
     skip_backward_clicked = Signal()
-    speed_changed         = Signal(float)
+    speed_changed = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedSize(500, 100)
         self._state = 0
-        self._s     = AppSettings.instance()
+        self._s = AppSettings.instance()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -89,16 +169,17 @@ class ControlHub(QWidget):
 
         # ── Steuerleiste ──────────────────────────────────────────────
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(4)
 
-        self.btn_play_pause    = QPushButton(self)
-        self.btn_stop          = QPushButton(self)
         self.btn_skip_backward = QPushButton(self)
-        self.btn_skip_forward  = QPushButton(self)
+        self.btn_play_pause = QPushButton(self)
+        self.btn_skip_forward = QPushButton(self)
+        self.btn_stop = QPushButton(self)
 
-        self.btn_play_pause.setIcon(   QIcon(str(ICONS_DIR / "player-play.svg")))
-        self.btn_stop.setIcon(         QIcon(str(ICONS_DIR / "player-stop.svg")))
+        self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
+        self.btn_stop.setIcon(QIcon(str(ICONS_DIR / "player-stop.svg")))
         self.btn_skip_backward.setIcon(QIcon(str(ICONS_DIR / "player-skip-back.svg")))
-        self.btn_skip_forward.setIcon( QIcon(str(ICONS_DIR / "player-skip-forward.svg")))
+        self.btn_skip_forward.setIcon(QIcon(str(ICONS_DIR / "player-skip-forward.svg")))
 
         for btn in [self.btn_skip_backward, self.btn_play_pause,
                     self.btn_skip_forward, self.btn_stop]:
@@ -109,10 +190,10 @@ class ControlHub(QWidget):
 
         btn_row.addStretch()
 
-        self.slider_speed = QSlider(Qt.Horizontal, self)
+        self.slider_speed = SpeedSlider(self)
         self.slider_speed.setRange(0, 2000)
         self.slider_speed.setValue(100)
-        self.slider_speed.setFixedWidth(150)
+        self.slider_speed.setFixedWidth(250)
         self.slider_speed.setStyleSheet("""
             QSlider { background: transparent; }
             QSlider::groove:horizontal {
@@ -133,47 +214,58 @@ class ControlHub(QWidget):
             QSlider::handle:horizontal:hover { background: #FFFFFF; }
         """)
         btn_row.addWidget(self.slider_speed)
+        btn_row.addStretch()
         root.addLayout(btn_row)
 
         # ── Info-Zeile ────────────────────────────────────────────────
-        self._info_row = QHBoxLayout()
-        self._info_row.setSpacing(6)
+        info_row = QHBoxLayout()
+        info_row.setSpacing(6)
 
-        # Datum (WCS)
+        # Datum (WCS) – feste Breite links
         self._datum_lbl = QLabel("G54", self)
         self._datum_lbl.setFixedWidth(54)
         self._datum_lbl.setAlignment(Qt.AlignCenter)
         self._datum_lbl.setStyleSheet(_LABEL_STYLE)
 
-        # GCode-Zeile (expandierend)
+        # GCode / Spacer – expandierend, per QStackedWidget austauschbar
         self._gcode_line = GCodeLine(self)
         self._gcode_line.setStyleSheet(_LABEL_STYLE)
 
-        # Tool
+        self._gcode_spacer = QWidget(self)
+        self._gcode_spacer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+
+        self._gcode_stack = QStackedWidget(self)
+        self._gcode_stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self._gcode_stack.addWidget(self._gcode_line)
+        self._gcode_stack.addWidget(self._gcode_spacer)
+
+        # Tool – feste Breite rechts
         self._tool_lbl = QLabel("T1", self)
         self._tool_lbl.setFixedWidth(40)
         self._tool_lbl.setAlignment(Qt.AlignCenter)
         self._tool_lbl.setStyleSheet(_LABEL_STYLE)
 
-        # Feedrate
+        # Feedrate – feste Breite ganz rechts
         self._feed_lbl = QLabel("F  0", self)
         self._feed_lbl.setFixedWidth(90)
         self._feed_lbl.setAlignment(Qt.AlignCenter)
         self._feed_lbl.setStyleSheet(_LABEL_STYLE)
 
-        self._info_row.addWidget(self._datum_lbl)
-        self._info_row.addWidget(self._gcode_line)
-        self._info_row.addWidget(self._tool_lbl)
-        self._info_row.addWidget(self._feed_lbl)
-        root.addLayout(self._info_row)
+        info_row.addWidget(self._datum_lbl)
+        info_row.addWidget(self._gcode_stack)
+        info_row.addWidget(self._tool_lbl)
+        info_row.addWidget(self._feed_lbl)
+        root.addLayout(info_row)
 
         # ── Sichtbarkeit aus AppSettings laden ────────────────────────
-        self._datum_lbl.setVisible(self._s.show_datum)
-        self._gcode_line.setVisible(self._s.show_gcode_line)
-        self._tool_lbl.setVisible(self._s.show_tool)
-        self._feed_lbl.setVisible(self._s.show_feedrate)
+        self._apply_visibility(
+            self._s.show_gcode_line,
+            self._s.show_datum,
+            self._s.show_tool,
+            self._s.show_feedrate,
+        )
 
-        # ── Signals verbinden ─────────────────────────────────────────
+        # ── Signals ───────────────────────────────────────────────────
         self.btn_play_pause.clicked.connect(self._play_pause_clicked)
         self.btn_stop.clicked.connect(self._stop_clicked)
         self.btn_skip_forward.clicked.connect(self.skip_forward_clicked)
@@ -182,11 +274,21 @@ class ControlHub(QWidget):
             lambda v: self.speed_changed.emit(v / 100.0)
         )
 
-        # AppSettings → Sichtbarkeit
+        self._s.show_gcode_line_changed.connect(self._on_show_gcode_changed)
         self._s.show_datum_changed.connect(self._datum_lbl.setVisible)
-        self._s.show_gcode_line_changed.connect(self._gcode_line.setVisible)
         self._s.show_tool_changed.connect(self._tool_lbl.setVisible)
         self._s.show_feedrate_changed.connect(self._feed_lbl.setVisible)
+
+    # ── Sichtbarkeit ──────────────────────────────────────────────────
+
+    def _apply_visibility(self, gcode: bool, datum: bool, tool: bool, feedrate: bool):
+        self._gcode_stack.setCurrentIndex(0 if gcode else 1)
+        self._datum_lbl.setVisible(datum)
+        self._tool_lbl.setVisible(tool)
+        self._feed_lbl.setVisible(feedrate)
+
+    def _on_show_gcode_changed(self, visible: bool):
+        self._gcode_stack.setCurrentIndex(0 if visible else 1)
 
     # ── Daten setzen ──────────────────────────────────────────────────
 
@@ -194,18 +296,16 @@ class ControlHub(QWidget):
         self._gcode_line.set_gcode(raw_text)
 
     def set_datum(self, wcs_index: int):
-        """WCS-Index 1–9 → G54–G59.3"""
         self._datum_lbl.setText(_WCS_NAMES.get(wcs_index, f"G{wcs_index}"))
 
     def set_tool(self, tool_number: int):
         self._tool_lbl.setText(f"T{tool_number}")
 
     def set_feedrate(self, feed_mm_min: float):
-        """Vorschub in mm/min → kompakt anzeigen."""
         if feed_mm_min < 1.0:
             self._feed_lbl.setText("Rapid")
         else:
-            self._feed_lbl.setText(f"F {int(feed_mm_min)}")
+            self._feed_lbl.setText(f"F{int(feed_mm_min):>5}")
 
     # ── Buttons ───────────────────────────────────────────────────────
 
@@ -225,6 +325,15 @@ class ControlHub(QWidget):
         self.stop_clicked.emit()
 
     def reset_play_state(self):
-        """Von außen aufrufbar wenn Simulation zurückgesetzt wird."""
         self.btn_play_pause.setIcon(QIcon(str(ICONS_DIR / "player-play.svg")))
         self._state = 0
+
+    # ── Modus ─────────────────────────────────────────────────────────
+
+    def set_mode(self, mode: str):
+        assert mode in ("SIM", "MACHINE")
+        show_controls = (mode == "SIM")
+        for w in (self.btn_skip_backward, self.btn_play_pause,
+                  self.btn_skip_forward, self.btn_stop, self.slider_speed):
+            w.setVisible(show_controls)
+            w.setEnabled(show_controls)

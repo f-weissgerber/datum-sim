@@ -30,9 +30,9 @@ class PathBuffer:
                 line_ids.append(seg.line_index)   # line_index, nicht line_number
 
         # Nur numpy-Arrays bleiben – kein doppelter RAM-Verbrauch
-        self.points:        np.ndarray = np.array(positions,   dtype='f8')
-        self.arc_lengths:   np.ndarray = np.array(arc_lengths, dtype='f8')
-        self.feed_rates:    np.ndarray = np.array(feed_rates,  dtype='f8')
+        self.points:        np.ndarray = np.array(positions,   dtype='f4')
+        self.arc_lengths:   np.ndarray = np.array(arc_lengths, dtype='f4')
+        self.feed_rates:    np.ndarray = np.array(feed_rates,  dtype='f4')
         self.line_ids:      np.ndarray = np.array(line_ids,    dtype='i4')
         self.total_length:  float      = total_s
 

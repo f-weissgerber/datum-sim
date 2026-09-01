@@ -10,11 +10,43 @@ from datum_sim.gcode.lexer          import tokenize
 from datum_sim.gcode.parser import parse, GCodeCommand
 from datum_sim.gcode.motion_planner import plan, MotionSegment
 from datum_sim.gcode.path_buffer    import PathBuffer
+from datum_sim.simulation.tool_database import get_tool
 
 @dataclass
 class ToolChange:
     line_index: int
     tool_number: int
+
+@dataclass
+class ToolValidationResult:
+    missing: list[int]
+    found: list[int]
+    ok: bool = False
+
+    def __str__(self) -> str:
+        if self.ok:
+            return True
+        lines = [f"Warning: "]
+        for t in self.missing:
+            lines.append(f"T{t} - not found")
+        return "\n".join(lines)
+
+def validate_tools(tool_changes: list[ToolChange], get_tool) -> ToolValidationResult:
+    missing, found, = [], []
+    seen = set()
+
+    for tc in tool_changes:
+        if tc.tool_number in seen:
+            continue
+        seen.add(tc.tool_number)
+
+        if get_tool(tc.tool_number) is None:
+            missing.append(tc.tool_number)
+        else:
+            found.append(tc.tool_number)
+
+    return ToolValidationResult(missing=missing, found=found, ok=True)
+
 
 @dataclass
 class GCodeProgram:
@@ -61,6 +93,14 @@ class GCodeCompiler:
         segments = plan(commands)
         buf = PathBuffer(segments)
         tool_changes = _extract_tool_changes(commands)
+        tool_validation = validate_tools(tool_changes, get_tool)
+
+        if not tool_validation.ok:
+            print(f"[Compiler] ⚠  {path}")
+            print(tool_validation)
+        else:
+            if tool_validation.found:
+                print(f"[Compiler] ✓  Werkzeuge OK: {tool_validation.found}")
 
         return GCodeProgram(
             raw_lines=raw_lines,

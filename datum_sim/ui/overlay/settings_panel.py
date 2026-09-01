@@ -15,6 +15,44 @@ PANEL_W  = 280   # Ausfahrender Inhalt
 
 ICONS_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
 
+# ── Styles ────────────────────────────────────────────────────────────────────
+# Fade-Breite (20px) relativ zur Strip-Breite als Gradient-Stop ausgedrückt,
+# da qlineargradient-Stops nur 0..1 statt absoluter Pixelwerte kennen.
+_STRIP_FADE_STOP = f"{10 / STRIP_W:.4f}"
+
+_STRIP_STYLE_CLOSED = f"""
+    QWidget {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:0,
+            stop:0 rgba(30, 30, 30, 0),
+            stop:{_STRIP_FADE_STOP} rgba(30, 30, 30, 220),
+            stop:1 rgba(30, 30, 30, 220)
+        );
+        border-top-right-radius: 12px;
+        border-bottom-right-radius: 12px;
+    }}
+"""
+
+_STRIP_STYLE_OPEN = f"""
+    QWidget {{
+        background: qlineargradient(
+            x1:0, y1:0, x2:1, y2:0,
+            stop:0 rgba(30, 30, 30, 0),
+            stop:{_STRIP_FADE_STOP} rgba(30, 30, 30, 220),
+            stop:1 rgba(30, 30, 30, 220)
+        );
+    }}
+"""
+
+_PANEL_STYLE = """
+    QFrame {
+        background: rgba(30, 30, 30, 220);
+        border-left: 1px solid rgba(255,255,255,30);
+        border-top-right-radius: 12px;
+        border-bottom-right-radius: 12px;
+    }
+"""
+
 
 class SettingsPanel(QWidget):
 
@@ -28,9 +66,7 @@ class SettingsPanel(QWidget):
         # ── Tab-Button-Leiste ─────────────────────────────────────────────────
         self._strip = QWidget(self)
         self._strip.setFixedWidth(STRIP_W)
-        self._strip.setStyleSheet("""
-            QWidget { background: rgba(30, 30, 30, 220); }
-        """)
+        self._strip.setStyleSheet(_STRIP_STYLE_CLOSED)
 
         self._strip_layout = QVBoxLayout(self._strip)
         self._strip_layout.setContentsMargins(4, 8, 4, 8)
@@ -40,12 +76,7 @@ class SettingsPanel(QWidget):
         # ── Inhalts-Panel ─────────────────────────────────────────────────────
         self._panel = QFrame(self)
         self._panel.setFixedWidth(PANEL_W)
-        self._panel.setStyleSheet("""
-            QFrame {
-                background: rgba(30, 30, 30, 220);
-                border-left: 1px solid rgba(255,255,255,30);
-            }
-        """)
+        self._panel.setStyleSheet(_PANEL_STYLE)
         self._panel.hide()
 
         self._stack = QStackedWidget(self._panel)
@@ -112,6 +143,7 @@ class SettingsPanel(QWidget):
 
     def _open_panel(self):
         self._panel_open = True
+        self._strip.setStyleSheet(_STRIP_STYLE_OPEN)
         self.setFixedWidth(STRIP_W + PANEL_W)
         self._panel.show()
         self._relayout()
@@ -124,6 +156,7 @@ class SettingsPanel(QWidget):
         for btn in self._tabs:
             btn.setChecked(False)
         self._panel.hide()
+        self._strip.setStyleSheet(_STRIP_STYLE_CLOSED)
         self.setFixedWidth(STRIP_W)
         if self.parent():
             self.parent()._layout_overlays()

@@ -8,6 +8,7 @@ from datum_sim.ui.overlay.control_hub import ControlHub
 from datum_sim.simulation.tool_database import get_tool
 from datum_sim.simulation.tool_definition import ToolDefinition
 from datum_sim.core.settings import AppSettings
+from datum_sim.core.perf_monitor import PerfMonitor
 
 
 class DatumSimWidget(QWidget):
@@ -23,7 +24,7 @@ class DatumSimWidget(QWidget):
         "None":        PathMode.NONE,
     }
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, perf_monitor=None):
         super().__init__(parent)
         self.viewport    = Viewport(self)
         self.settings    = SettingsPanel(self)
@@ -44,12 +45,14 @@ class DatumSimWidget(QWidget):
         self.settings.sim_panel.tool_selected.connect(self._apply_tool)
 
         self._render_timer = QTimer(self)
-        self._render_timer.setInterval(16)
+        self._render_timer.setInterval(32)
         self._render_timer.timeout.connect(self._tick)
         self._render_timer.start()
 
         self._connect_control_hub()
         self._layout_overlays()
+
+        self.viewport._perf = perf_monitor
 
     # ── Datei ─────────────────────────────────────────────────────────
 
@@ -110,7 +113,8 @@ class DatumSimWidget(QWidget):
     def set_mode(self, mode: str):
         assert mode in ("SIM", "MACHINE")
         self._mode = mode
-        if mode == "SIM" and self._player:
+        self.control_hub.set_mode(mode)
+        if self._player:
             self._player.reset()
 
     def set_path_mode(self, mode: PathMode):
@@ -151,6 +155,8 @@ class DatumSimWidget(QWidget):
         if self._player:
             self._player.reset()
             self._last_tool_change_idx = -1
+            self._last_wcs_change_idx = -1
+            self.control_hub.reset_play_state()
 
     def sim_seek(self, fraction: float):
         if self._player: self._player.seek(fraction)
@@ -169,11 +175,13 @@ class DatumSimWidget(QWidget):
                 self.viewport.update()
                 return
 
-            pos  = self._player.tick()
-            line = self._player.current_line()
-            s    = self._player.current_s()
+            pos, line, s = self._player.tick()  # ← ein Aufruf statt vier
+
+            if self._player.is_finished:
+                self._advance_queue()
 
             self._check_tool_change(line)
+            self._check_wcs_change(line)
 
             self.viewport.set_tool_position(pos)
             self.viewport.set_active_line(line)
@@ -182,8 +190,16 @@ class DatumSimWidget(QWidget):
             if self._clean_lines and 0 <= line < len(self._clean_lines):
                 self.control_hub.set_gcode(f"({line}) {self._clean_lines[line]}")
 
+            feed = self._player._path.feed_at(s)
+            self.control_hub.set_feedrate(feed)
+            self.control_hub.set_datum(getattr(self.viewport, '_active_wcs', 1))
+            if hasattr(self, '_current_tool') and self._current_tool:
+                self.control_hub.set_tool(self._current_tool.tool_number)
+
         self.viewport.update()
 
+    def _check_wcs_change(self, current_line: int):
+        pass
     # ── Layout ────────────────────────────────────────────────────────
 
     def _layout_overlays(self):
